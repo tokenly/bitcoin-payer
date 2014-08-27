@@ -1,9 +1,8 @@
 <?php
 
-namespace LTBAuctioneer\Auctioneer\Payer;
+namespace Utipd\BitcoinPayer;
 
 use GuzzleHttp\Client as GuzzleClient;
-use LTBAuctioneer\Debug\Debug;
 use Exception;
 
 /*
