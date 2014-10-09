@@ -17,7 +17,6 @@ class BitcoinPayer
 
     ////////////////////////////////////////////////////////////////////////
 
-
     // returns an array of the $transaction_id and $balance sent (as float)
     public function sweepBTC($source_address, $destination_address, $private_key, $float_fee) {
         // get the current balance
@@ -60,6 +59,13 @@ class BitcoinPayer
         $transaction_id = $this->doTransaction($private_key, $utxos, $destinations);
 
         return $transaction_id;
+    }
+
+
+    public function getBalance($source_address) {
+        $utxos = $this->getUnspentOutputs($source_address);
+        $float_balance = $this->sumUnspentOutputs($utxos);
+        return $float_balance;
     }
 
     ////////////////////////////////////////////////////////////////////////
