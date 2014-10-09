@@ -17,22 +17,62 @@ class BitcoinPayer
 
     ////////////////////////////////////////////////////////////////////////
 
+
     // returns an array of the $transaction_id and $balance sent (as float)
     public function sweepBTC($source_address, $destination_address, $private_key, $float_fee) {
-        $unspent_outputs = $this->getUnspentOutputs($source_address);
+        // get the current balance
+        $utxos = $this->getUnspentOutputs($source_address);
+        $float_balance = $this->sumUnspentOutputs($utxos);
 
-        // sum the unspent outputs total
-        $float_balance = $this->sumUnspentOutputs($unspent_outputs);
+        // compose destinations array with the entire amount
+        $destinations = [
+            $destination_address => $float_balance - $float_fee,
+        ];
 
-        // construct a transaction with all unspent outputs
-        $inputs = [];
-        foreach($unspent_outputs as $unspent_output) {
-            $inputs[] = ['txid' => $unspent_output['tx'], 'vout' => $unspent_output['n']];
+        // send the transaction
+        $transaction_id = $this->doTransaction($private_key, $utxos, $destinations);
+
+        // calculate amount sent and return
+        $float_balance_sent = $float_balance - $float_fee;
+        return [$transaction_id, $float_balance_sent];
+    }
+
+
+    // returns the transaction id
+    public function sendBTC($source_address, $destination_address, $float_amount, $private_key, $float_fee) {
+        // get the current balance
+        $utxos = $this->getUnspentOutputs($source_address);
+        $float_balance = $this->sumUnspentOutputs($utxos);
+
+        // calculate change amount
+        $change_amount = $float_balance - $float_amount - $float_fee;
+        if ($change_amount < 0) { throw new Exception("Address did not have enough funds for this transaction", 1); }
+
+        // compose destinations array with the entire amount
+        $destinations = [
+            $destination_address => $float_amount,
+        ];
+        if ($change_amount > 0) {
+            $destinations[$source_address] = $change_amount;
         }
-        $outputs = [$destination_address => $float_balance - $float_fee];
+
+        // send the transaction
+        $transaction_id = $this->doTransaction($private_key, $utxos, $destinations);
+
+        return $transaction_id;
+    }
+
+    ////////////////////////////////////////////////////////////////////////
+
+    protected function doTransaction($private_key, $utxos, $destinations) {
+        // construct a transaction with all the unspent outputs
+        $inputs = [];
+        foreach($utxos as $utxo) {
+            $inputs[] = ['txid' => $utxo['tx'], 'vout' => $utxo['n']];
+        }
 
         // create the raw transaction
-        $raw_tx = $this->bitcoind_client->createrawtransaction($inputs, $outputs);
+        $raw_tx = $this->bitcoind_client->createrawtransaction($inputs, $destinations);
 
         // sign the raw transaction
         $signed_tx = (array)$this->bitcoind_client->signrawtransaction($raw_tx, [], [$private_key]);
@@ -41,12 +81,9 @@ class BitcoinPayer
         // send the transaction
         $transaction_id = $this->bitcoind_client->sendrawtransaction($signed_tx['hex']);
 
-        // return the result
-        $float_balance_sent = $float_balance - $float_fee;
-        return [$transaction_id, $float_balance_sent];
+        return $transaction_id;
     }
 
-    ////////////////////////////////////////////////////////////////////////
 
     // returns a float
     protected function getUnspentOutputs($address) {
