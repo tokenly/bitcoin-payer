@@ -39,12 +39,14 @@ class BitcoinPayer
 
     // returns the transaction id
     public function sendBTC($source_address, $destination_address, $float_amount, $private_key, $float_fee) {
+        $float_amount = round($float_amount, 8);
+
         // get the current balance
         $utxos = $this->getUnspentOutputs($source_address);
         $float_balance = $this->sumUnspentOutputs($utxos);
 
         // calculate change amount
-        $change_amount = $float_balance - $float_amount - $float_fee;
+        $change_amount = round($float_balance - $float_amount - $float_fee, 8);
         if ($change_amount < 0) { throw new Exception("Address did not have enough funds for this transaction", 1); }
 
         // compose destinations array with the entire amount
