@@ -1,1 +1,1 @@
-The BitcoinPayer component for UTipdMe.
+The BitcoinPayer component for Tokenly.

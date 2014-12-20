@@ -1,6 +1,6 @@
 <?php
 
-namespace Utipd\BitcoinPayer;
+namespace Tokenly\BitcoinPayer;
 
 use GuzzleHttp\Client as GuzzleClient;
 use Exception;

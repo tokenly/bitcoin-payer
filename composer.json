@@ -1,5 +1,5 @@
 {
-    "name": "utipd/bitcoin-payer",
+    "name": "tokenly/bitcoin-payer",
     "description": "A bitcoin payment library",
     "type": "library",
     "license": "MIT",
@@ -19,6 +19,6 @@
         "phpunit/phpunit": "~4"
     },
     "autoload": {
-        "psr-0": {"Utipd\\BitcoinPayer": "src"}
+        "psr-0": {"Tokenly\\BitcoinPayer": "src"}
     }
 }
