@@ -11,8 +11,9 @@ use Exception;
 class BitcoinPayer
 {
 
-    public function __construct($bitcoind_client) {
+    public function __construct($bitcoind_client, $insight_client) {
         $this->bitcoind_client = $bitcoind_client;
+        $this->insight_client  = $insight_client;
     }
 
     ////////////////////////////////////////////////////////////////////////
@@ -76,7 +77,7 @@ class BitcoinPayer
         // construct a transaction with all the unspent outputs
         $inputs = [];
         foreach($utxos as $utxo) {
-            $inputs[] = ['txid' => $utxo['tx'], 'vout' => $utxo['n']];
+            $inputs[] = ['txid' => $utxo['txid'], 'vout' => $utxo['vout']];
         }
 
         // create the raw transaction
@@ -93,16 +94,12 @@ class BitcoinPayer
     }
 
 
-    // returns a float
+    // returns an array of utxos from insight
     protected function getUnspentOutputs($address) {
-        // get all funds (use blockr)
-        // http://btc.blockr.io/api/v1/address/unspent/1EuJjmRA2kMFRhjAee8G6aqCoFpFnNTJh4
-        $client = new GuzzleClient(['base_url' => 'http://btc.blockr.io',]);
-        $response = $client->get('/api/v1/address/unspent/'.$address);
-        $json_data = $response->json();
-        return $json_data['data']['unspent'];
+        return $this->insight_client->getUnspentTransactions($address);
     }
 
+    // returns a float
     protected function sumUnspentOutputs($unspent_outputs) {
         $float_total = 0;
         foreach($unspent_outputs as $unspent_output) {

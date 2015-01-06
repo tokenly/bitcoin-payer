@@ -1,11 +1,10 @@
 <?php
 
-namespace Tokenly\BitcoinAddressLib;
+namespace Tokenly\BitcoinPayer\Provider;
 
 
 use Exception;
 use Illuminate\Support\ServiceProvider;
-use Nbobtc\Bitcoind\Client;
 use Tokenly\BitcoinPayer\BitcoinPayer;
 
 /*
@@ -27,12 +26,18 @@ class BitcoinPayerServiceProvider extends ServiceProvider
     {
         $this->package('tokenly/bitcoin-payer', 'bitcoin-payer', __DIR__.'/../../');
 
-        $this->app->bind('Tokenly\BitcoinPayer\BitcoinPayer', function($app) {
-            $xcpd_client = $app->make('Tokenly\XCPDClient\Client');
-            $config = $app['config']['bitcoin::bitcoin'];
+        $this->app->bind('Nbobtc\Bitcoind\Bitcoind', function($app) {
+            $config = $app['config']['bitcoin'];
             $connection_string = "{$config['scheme']}://{$config['rpcUser']}:{$config['rpcPassword']}@{$config['host']}:{$config['port']}";
             $bitcoin_client = new Client($connection_string);
-            $sender = new BitcoinPayer($xcpd_client, $bitcoin_client);
+            $bitcoind = new Bitcoind($bitcoin_client);
+            return $bitcoind;
+        });
+
+        $this->app->bind('Tokenly\BitcoinPayer\BitcoinPayer', function($app) {
+            $bitcoind = $app->make('Nbobtc\Bitcoind\Bitcoind');
+            $insight_client = $app->make('Tokenly\Insight\Client');
+            $sender = new BitcoinPayer($bitcoind, $insight_client);
             return $sender;
         });
     }
