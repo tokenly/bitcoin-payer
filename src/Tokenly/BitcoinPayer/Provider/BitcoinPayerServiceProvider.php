@@ -1,6 +1,6 @@
 <?php
 
-namespace Tokenly\BitcoinAddressLib;
+namespace Tokenly\BitcoinPayer\Provider;
 
 
 use Exception;
