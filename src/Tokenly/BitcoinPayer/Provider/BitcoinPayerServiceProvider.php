@@ -28,11 +28,10 @@ class BitcoinPayerServiceProvider extends ServiceProvider
         $this->bindConfig();
 
         $this->app->bind('Nbobtc\Bitcoind\Bitcoind', function($app) {
-
             $url_pieces = parse_url(Config::get('bitcoin-payer.connection_string'));
             $rpc_user = Config::get('bitcoin-payer.rpc_user');
             $rpc_password = Config::get('bitcoin-payer.rpc_password');
-            $url_pieces = parse_url(Config::get('bitcoin-payer.connection_string'));
+
             $connection_string = "{$url_pieces['scheme']}://{$rpc_user}:{$rpc_password}@{$url_pieces['host']}:{$url_pieces['port']}";
             $bitcoin_client = new Client($connection_string);
             $bitcoind = new Bitcoind($bitcoin_client);
