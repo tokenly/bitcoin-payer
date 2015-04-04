@@ -2,8 +2,9 @@
 
 namespace Tokenly\BitcoinPayer;
 
-use GuzzleHttp\Client as GuzzleClient;
 use Exception;
+use GuzzleHttp\Client as GuzzleClient;
+use Tokenly\BitcoinPayer\Exception\PaymentException;
 
 /*
 * BitcoinPayer
@@ -48,7 +49,7 @@ class BitcoinPayer
 
         // calculate change amount
         $change_amount = round($float_balance - $float_amount - $float_fee, 8);
-        if ($change_amount < 0) { throw new Exception("Address did not have enough funds for this transaction", 1); }
+        if ($change_amount < 0) { throw new PaymentException("Address did not have enough funds for this transaction", 1); }
 
         // compose destinations array with the entire amount
         $destinations = [
@@ -85,7 +86,7 @@ class BitcoinPayer
 
         // sign the raw transaction
         $signed_tx = (array)$this->bitcoind_client->signrawtransaction($raw_tx, [], [$private_key]);
-        if (!$signed_tx['complete']) { throw new Exception("Failed to sign transaction with the given key", 1); }
+        if (!$signed_tx['complete']) { throw new PaymentException("Failed to sign transaction with the given key", 1); }
 
         // send the transaction
         $transaction_id = $this->bitcoind_client->sendrawtransaction($signed_tx['hex']);
