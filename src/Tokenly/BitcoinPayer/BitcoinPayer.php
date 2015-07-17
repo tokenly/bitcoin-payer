@@ -3,7 +3,6 @@
 namespace Tokenly\BitcoinPayer;
 
 use Exception;
-use GuzzleHttp\Client as GuzzleClient;
 use Tokenly\BitcoinPayer\Exception\PaymentException;
 
 /*
@@ -95,9 +94,14 @@ class BitcoinPayer
     }
 
 
-    // returns an array of utxos from insight
+    // returns an array of utxos from insight (filtered through bitcoind)
     protected function getUnspentOutputs($address) {
-        return $this->insight_client->getUnspentTransactions($address);
+        $utxos = $this->insight_client->getUnspentTransactions($address);
+
+        // because of a bug in insight, we need to filter out utxos that don't exist
+        $utxos = $this->filterBadUTXOs($utxos);
+
+        return $utxos;
     }
 
     // returns a float
@@ -108,6 +112,31 @@ class BitcoinPayer
 
         }
         return $float_total;
+    }
+
+    protected function filterBadUTXOs($utxos) {
+        $utxos_out = [];
+
+        foreach($utxos as $utxo) {
+            try {
+                $txid = $utxo['txid'];
+                $raw_transaction_string = $this->bitcoind_client->getrawtransaction($txid);
+                if (strlen($raw_transaction_string)) {
+                    $utxos_out[] = $utxo;
+                }
+            } catch (Exception $e) {
+                if ($e->getCode() == -5) {
+                    // -5: No information available about transaction
+                    // skip this transaction
+                    continue;
+                }
+
+                // some unknown error
+                throw $e;
+            }
+        }
+
+        return $utxos_out;
     }
 
 }
