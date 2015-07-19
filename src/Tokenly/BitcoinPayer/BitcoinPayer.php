@@ -10,6 +10,7 @@ use Tokenly\BitcoinPayer\Exception\PaymentException;
 */
 class BitcoinPayer
 {
+    const HIGH_FEE = 0.01;
 
     public function __construct($bitcoind_client, $insight_client) {
         $this->bitcoind_client = $bitcoind_client;
@@ -44,6 +45,11 @@ class BitcoinPayer
 
         // get the current balance
         $utxos = $this->getUnspentOutputs($source_address);
+
+        // get just enough utxos to sum to amount
+        $utxos = $this->filterUnspentOutputsToSatisfyAmount($utxos, $float_amount + $float_fee);
+
+        // get the total balance of the utxos we are sending
         $float_balance = $this->sumUnspentOutputs($utxos);
 
         // calculate change amount
@@ -56,6 +62,11 @@ class BitcoinPayer
         ];
         if ($change_amount > 0) {
             $destinations[$source_address] = $change_amount;
+        }
+
+        // sanity check
+        if (($float_balance - $float_amount - $change_amount) >= self::HIGH_FEE) {
+            if ($float_fee < self::HIGH_FEE) { throw new PaymentException("Calculated fee was too high."); }
         }
 
         // send the transaction
@@ -137,6 +148,23 @@ class BitcoinPayer
         }
 
         return $utxos_out;
+    }
+
+    // try to get just enough UTXOs to cover the total amount
+    //   will return an array of up to all the utxos passed
+    protected function filterUnspentOutputsToSatisfyAmount($utxos, $total_amount_float) {
+        $amount_sum = 0.0;
+        $filtered_utxos = [];
+        foreach($utxos as $utxo) {
+            $filtered_utxos[] = $utxo;
+            $amount_sum += $utxo['amount'];
+
+            if ($amount_sum >= $total_amount_float) {
+                break;
+            }
+        }
+
+        return $filtered_utxos;
     }
 
 }
