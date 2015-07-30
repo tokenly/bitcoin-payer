@@ -43,6 +43,9 @@ class BitcoinPayer
     public function sendBTC($source_address, $destination_address, $float_amount, $private_key, $float_fee) {
         $float_amount = round($float_amount, 8);
 
+        // don't send 0
+        if ($float_amount <= 0) { throw new PaymentException("Cannot send an amount of 0 or less.", 1); }
+
         // get the current balance
         $utxos = $this->getUnspentOutputs($source_address);
 
