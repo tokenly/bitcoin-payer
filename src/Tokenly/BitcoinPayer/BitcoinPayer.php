@@ -21,6 +21,17 @@ class BitcoinPayer
 
     // returns an array of the $transaction_id and $balance sent (as float)
     public function sweepBTC($source_address, $destination_address, $private_key, $float_fee) {
+        // compose the transaction
+        list($signed_transaction_hex, $float_balance) = $this->buildSignedTransactionAndBalanceToSweepBTC($source_address, $destination_address, $private_key, $float_fee, $utxos);
+
+        // send the transaction
+        $transaction_id = $this->sendSignedTransaction($signed_transaction_hex);
+
+        // return the transaction id and the calculated amount sent
+        return [$transaction_id, $float_balance];
+    }
+
+    public function buildSignedTransactionAndBalanceToSweepBTC($source_address, $destination_address, $private_key, $float_fee) {
         // get the current balance
         $utxos = $this->getUnspentOutputs($source_address);
         $float_balance = $this->sumUnspentOutputs($utxos);
@@ -30,17 +41,48 @@ class BitcoinPayer
             $destination_address => $float_balance - $float_fee,
         ];
 
-        // send the transaction
-        $transaction_id = $this->doTransaction($private_key, $utxos, $destinations);
-
-        // calculate amount sent and return
-        $float_balance_sent = $float_balance - $float_fee;
-        return [$transaction_id, $float_balance_sent];
+        $signed_transaction_hex = $this->createAndSignTransaction($private_key, $utxos, $destinations);
+        return [$signed_transaction_hex, $float_balance];
     }
 
 
     // returns the transaction id
     public function sendBTC($source_address, $destination_address, $float_amount, $private_key, $float_fee) {
+        list($utxos, $destinations) = $this->buildUTXOsAndDestinations($source_address, $destination_address, $float_amount, $float_fee);
+
+        // create the transaction
+        $signed_transaction_hex = $this->createAndSignTransaction($private_key, $utxos, $destinations);
+
+        // send the transaction
+        $transaction_id = $this->sendSignedTransaction($signed_transaction_hex);
+
+        return $transaction_id;
+    }
+
+    public function buildSignedTransactionHexToSendBTC($source_address, $destination_address, $float_amount, $private_key, $float_fee) {
+        list($utxos, $destinations) = $this->buildUTXOsAndDestinations($source_address, $destination_address, $float_amount, $float_fee);
+
+        // compose the transaction
+        $signed_transaction_hex = $this->createAndSignTransaction($private_key, $utxos, $destinations);
+
+        return $signed_transaction_hex;
+    }
+
+    public function sendSignedTransaction($signed_transaction_hex) {
+        $transaction_id = $this->bitcoind_client->sendrawtransaction($signed_transaction_hex);
+        return $transaction_id;
+    }
+
+
+    public function getBalance($source_address) {
+        $utxos = $this->getUnspentOutputs($source_address);
+        $float_balance = $this->sumUnspentOutputs($utxos);
+        return $float_balance;
+    }
+
+    ////////////////////////////////////////////////////////////////////////
+
+    protected function buildUTXOsAndDestinations($source_address, $destination_address, $float_amount, $float_fee) {
         $float_amount = round($float_amount, 8);
 
         // don't send 0
@@ -72,22 +114,10 @@ class BitcoinPayer
             if ($float_fee < self::HIGH_FEE) { throw new PaymentException("Calculated fee was too high."); }
         }
 
-        // send the transaction
-        $transaction_id = $this->doTransaction($private_key, $utxos, $destinations);
-
-        return $transaction_id;
+        return [$utxos, $destinations];
     }
 
-
-    public function getBalance($source_address) {
-        $utxos = $this->getUnspentOutputs($source_address);
-        $float_balance = $this->sumUnspentOutputs($utxos);
-        return $float_balance;
-    }
-
-    ////////////////////////////////////////////////////////////////////////
-
-    protected function doTransaction($private_key, $utxos, $destinations) {
+    protected function createAndSignTransaction($private_key, $utxos, $destinations) {
         // construct a transaction with all the unspent outputs
         $inputs = [];
         foreach($utxos as $utxo) {
@@ -101,10 +131,7 @@ class BitcoinPayer
         $signed_tx = (array)$this->bitcoind_client->signrawtransaction($raw_tx, [], [$private_key]);
         if (!$signed_tx['complete']) { throw new PaymentException("Failed to sign transaction with the given key", 1); }
 
-        // send the transaction
-        $transaction_id = $this->bitcoind_client->sendrawtransaction($signed_tx['hex']);
-
-        return $transaction_id;
+        return $signed_tx['hex'];
     }
 
 
