@@ -80,6 +80,11 @@ class BitcoinPayer
         return $float_balance;
     }
 
+    public function getAllUTXOs($address) {
+        $utxos = $this->getUnspentOutputs($address);
+        return $utxos;
+    }
+
     ////////////////////////////////////////////////////////////////////////
 
     protected function buildUTXOsAndDestinations($source_address, $destination_address, $float_amount, $float_fee) {
