@@ -7,6 +7,8 @@ use Exception;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\ServiceProvider;
 use Tokenly\BitcoinPayer\BitcoinPayer;
+use Nbobtc\Bitcoind\Bitcoind;
+use Nbobtc\Bitcoind\Client;
 
 /*
 * BitcoinPayerServiceProvider
@@ -28,20 +30,26 @@ class BitcoinPayerServiceProvider extends ServiceProvider
         $this->bindConfig();
 
         $this->app->bind('Nbobtc\Bitcoind\Bitcoind', function($app) {
+            $bitcoind_client = $app->make('Nbobtc\Bitcoind\Client');
+            $bitcoind = new Bitcoind($bitcoind_client);
+            return $bitcoind;
+        });
+
+        $this->app->bind('Nbobtc\Bitcoind\Client', function($app) {
             $url_pieces = parse_url(Config::get('bitcoin-payer.connection_string'));
             $rpc_user = Config::get('bitcoin-payer.rpc_user');
             $rpc_password = Config::get('bitcoin-payer.rpc_password');
 
             $connection_string = "{$url_pieces['scheme']}://{$rpc_user}:{$rpc_password}@{$url_pieces['host']}:{$url_pieces['port']}";
-            $bitcoin_client = new Client($connection_string);
-            $bitcoind = new Bitcoind($bitcoin_client);
-            return $bitcoind;
+            $bitcoind_client = new Client($connection_string);
+            return $bitcoind_client;
         });
 
         $this->app->bind('Tokenly\BitcoinPayer\BitcoinPayer', function($app) {
+            $bitcoind_client = $app->make('Nbobtc\Bitcoind\Client');
             $bitcoind = $app->make('Nbobtc\Bitcoind\Bitcoind');
             $insight_client = $app->make('Tokenly\Insight\Client');
-            $sender = new BitcoinPayer($bitcoind, $insight_client);
+            $sender = new BitcoinPayer($bitcoind, $insight_client, $bitcoind_client);
             return $sender;
         });
     }
