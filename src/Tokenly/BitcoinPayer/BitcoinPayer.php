@@ -144,14 +144,8 @@ class BitcoinPayer
 
     // returns an array of utxos from insight (filtered through bitcoind)
     protected function getUnspentOutputs($address) {
-        // insight has become too unreliable
-        // $utxos = $this->insight_client->getUnspentTransactions($address);
-
-        // use bitcoind instead
+        // use bitcoind to get UTXOs
         $utxos = $this->getUnspentOutputsFromBitcoind($address);
-
-        // // because of a bug in insight, we need to filter out utxos that don't exist
-        // $utxos = $this->filterBadUTXOs($utxos);
 
         return $utxos;
     }
@@ -164,31 +158,6 @@ class BitcoinPayer
 
         }
         return $float_total;
-    }
-
-    protected function filterBadUTXOs($utxos) {
-        $utxos_out = [];
-
-        foreach($utxos as $utxo) {
-            try {
-                $txid = $utxo['txid'];
-                $raw_transaction_string = $this->bitcoind_client->getrawtransaction($txid);
-                if (strlen($raw_transaction_string)) {
-                    $utxos_out[] = $utxo;
-                }
-            } catch (Exception $e) {
-                if ($e->getCode() == -5) {
-                    // -5: No information available about transaction
-                    // skip this transaction
-                    continue;
-                }
-
-                // some unknown error
-                throw $e;
-            }
-        }
-
-        return $utxos_out;
     }
 
     // try to get just enough UTXOs to cover the total amount
@@ -252,65 +221,12 @@ class BitcoinPayer
             'address'       => $bitcoind_vout['scriptPubKey']['addresses'][0],
             'txid'          => $bitcoind_txo['txid'],
             'vout'          => $bitcoind_vout['n'],
-            'scriptPubKey'  => $bitcoind_vout['scriptPubKey']['hex'],
+            'script'        => $bitcoind_vout['scriptPubKey']['hex'],
             'amount'        => $bitcoind_vout['value'],
             'confirmations' => $bitcoind_txo['confirmations'],
         ];
     }
 
-/*
 
-Insight $utxos: [
-    {
-        "address": "1EAPKbZRV4KNTBVFSNse4u7JiKWHNHUE2Y",
-        "txid": "460de4975ebdb8bfde4baf7233ce401d0ac3c61171897c375c2976bb9ba402ba",
-        "vout": 1,
-        "ts": 1446680179,
-        "scriptPubKey": "76a914906002db4dd7dd6f1a2a182c0037159348760fa388ac",
-        "amount": 0.0006902,
-        "confirmationsFromCache": false
-    },
-    {
-        "address": "1EAPKbZRV4KNTBVFSNse4u7JiKWHNHUE2Y",
-        "txid": "dca10e5fce50237b047bcbd21b9c28bef0e84d04e12bbf8dd9fd90c30c45eb2a",
-        "vout": 0,
-        "ts": 1445132794,
-        "amount": 0.03661394,
-        "confirmationsFromCache": false
-    }
-]
-
-
-
-bitcoind vouts: [
-    {
-        "value": 0.001,
-        "n": 0,
-        "scriptPubKey": {
-            "asm": "OP_DUP OP_HASH160 906002db4dd7dd6f1a2a182c0037159348760fa3 OP_EQUALVERIFY OP_CHECKSIG",
-            "hex": "76a914906002db4dd7dd6f1a2a182c0037159348760fa388ac",
-            "reqSigs": 1,
-            "type": "pubkeyhash",
-            "addresses": [
-                "1EAPKbZRV4KNTBVFSNse4u7JiKWHNHUE2Y"
-            ]
-        }
-    },
-    {
-        "value": 5.47e-5,
-        "n": 0,
-        "scriptPubKey": {
-            "asm": "OP_DUP OP_HASH160 906002db4dd7dd6f1a2a182c0037159348760fa3 OP_EQUALVERIFY OP_CHECKSIG",
-            "hex": "76a914906002db4dd7dd6f1a2a182c0037159348760fa388ac",
-            "reqSigs": 1,
-            "type": "pubkeyhash",
-            "addresses": [
-                "1EAPKbZRV4KNTBVFSNse4u7JiKWHNHUE2Y"
-            ]
-        }
-    },
-
-
- */
 }
 
