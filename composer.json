@@ -13,8 +13,7 @@
     "require": {
         "php": ">=5.4.0",
         "nbobtc/bitcoind-php": "1.2.*",
-        "guzzlehttp/guzzle": "~5",
-        "tokenly/insight-client": "dev-master"
+        "guzzlehttp/guzzle": "~5"
     },
     "require-dev": {
         "phpunit/phpunit": "~4"

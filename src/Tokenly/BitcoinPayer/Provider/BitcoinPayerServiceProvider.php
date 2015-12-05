@@ -48,8 +48,7 @@ class BitcoinPayerServiceProvider extends ServiceProvider
         $this->app->bind('Tokenly\BitcoinPayer\BitcoinPayer', function($app) {
             $bitcoind_client = $app->make('Nbobtc\Bitcoind\Client');
             $bitcoind = $app->make('Nbobtc\Bitcoind\Bitcoind');
-            $insight_client = $app->make('Tokenly\Insight\Client');
-            $sender = new BitcoinPayer($bitcoind, $insight_client, $bitcoind_client);
+            $sender = new BitcoinPayer($bitcoind, $bitcoind_client);
             return $sender;
         });
     }

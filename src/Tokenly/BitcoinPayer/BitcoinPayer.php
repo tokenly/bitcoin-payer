@@ -12,9 +12,8 @@ class BitcoinPayer
 {
     const HIGH_FEE = 0.01;
 
-    public function __construct($bitcoind_client, $insight_client, $bitcoind_rpc_client) {
+    public function __construct($bitcoind_client, $bitcoind_rpc_client) {
         $this->bitcoind_client     = $bitcoind_client;
-        $this->insight_client      = $insight_client;
         $this->bitcoind_rpc_client = $bitcoind_rpc_client;
     }
 
@@ -142,7 +141,7 @@ class BitcoinPayer
     }
 
 
-    // returns an array of utxos from insight (filtered through bitcoind)
+    // returns an array of utxos from bitcoind
     protected function getUnspentOutputs($address) {
         // use bitcoind to get UTXOs
         $utxos = $this->getUnspentOutputsFromBitcoind($address);
