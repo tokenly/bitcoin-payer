@@ -10,7 +10,8 @@ use Tokenly\BitcoinPayer\Exception\PaymentException;
 */
 class BitcoinPayer
 {
-    const HIGH_FEE = 0.01;
+    const HIGH_FEE            = 0.01;
+    const MINIMUM_CHANGE_SIZE = 0.00005000;
 
     public function __construct($bitcoind_client, $bitcoind_rpc_client) {
         $this->bitcoind_client     = $bitcoind_client;
@@ -104,7 +105,7 @@ class BitcoinPayer
 
         // calculate change amount
         $change_amount = round($float_balance - $float_amount - $float_fee, 8);
-        \Illuminate\Support\Facades\Log::debug("\$source_address=$source_address \$float_balance=$float_balance \$float_amount=$float_amount \$float_fee=$float_fee \$change_amount=$change_amount");
+        // \Illuminate\Support\Facades\Log::debug("\$source_address=$source_address \$float_balance=$float_balance \$float_amount=$float_amount \$float_fee=$float_fee \$change_amount=$change_amount");
         if ($change_amount < 0) { throw new PaymentException("Address did not have enough funds for this transaction", 1); }
 
         // compose destinations array with the entire amount
@@ -112,7 +113,19 @@ class BitcoinPayer
             $destination_address => $float_amount,
         ];
         if ($change_amount > 0) {
-            $destinations[$source_address] = $change_amount;
+            if ($change_amount >= self::MINIMUM_CHANGE_SIZE) {
+                $destinations[$source_address] = $change_amount;
+            } else {
+                // very small change transactions are not allowed
+                //   set change to 0 and increase the fee
+                $change_amount = 0;
+                // EventLog::debug('payer.feeIncreased', [
+                //     'msg'             => 'Change was too small',
+                //     'requestedChange' => CurrencyUtil::valueToSatoshis($change_amount),
+                //     'oldFeeSat'       => CurrencyUtil::valueToSatoshis($float_fee),
+                //     'newFeeSat'       => CurrencyUtil::valueToSatoshis($float_balance - $float_amount - $change_amount),
+                // ]);
+            }
         }
 
         // sanity check
