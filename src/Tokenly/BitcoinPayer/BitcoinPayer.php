@@ -199,7 +199,9 @@ class BitcoinPayer
         $spent_txos_map = [];
         foreach($txos as $txo) {
             foreach($txo['vin'] as $vin) {
-                $spent_txos_map[$vin['txid'].':'.$vin['vout']] = true;
+                if (isset($vin['txid']) AND isset($vin['vout'])) {
+                    $spent_txos_map[$vin['txid'].':'.$vin['vout']] = true;
+                }
             }
         }
 
