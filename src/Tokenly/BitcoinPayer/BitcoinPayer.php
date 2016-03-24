@@ -3,6 +3,7 @@
 namespace Tokenly\BitcoinPayer;
 
 use Exception;
+use Illuminate\Database\QueryException;
 use Tokenly\BitcoinPayer\Exception\PaymentException;
 
 /*
@@ -13,9 +14,12 @@ class BitcoinPayer
     const HIGH_FEE            = 0.01;
     const MINIMUM_CHANGE_SIZE = 0.00005000;
 
-    public function __construct($bitcoind_client, $bitcoind_rpc_client) {
-        $this->bitcoind_client     = $bitcoind_client;
-        $this->bitcoind_rpc_client = $bitcoind_rpc_client;
+    const CACHE_CONFIRMATIONS = 6;
+
+    public function __construct($bitcoind_client, $bitcoind_rpc_client, $utxo_cache_table_provider=null) {
+        $this->bitcoind_client           = $bitcoind_client;
+        $this->bitcoind_rpc_client       = $bitcoind_rpc_client;
+        $this->utxo_cache_table_provider = $utxo_cache_table_provider;
     }
 
     ////////////////////////////////////////////////////////////////////////
@@ -190,11 +194,58 @@ class BitcoinPayer
     }
 
     protected function getUnspentOutputsFromBitcoind($address) {
-        $unspent_txos = [];
 
         // get all txos
-        $rpc_result = $this->bitcoind_rpc_client->execute('searchrawtransactions', [$address,1,0,9999999]);
-        $txos = json_decode(json_encode($rpc_result->result), true);
+        \Illuminate\Support\Facades\Log::debug("searchrawtransactions begin ($address)");
+        $rpc_result = $this->bitcoind_rpc_client->execute('searchrawtransactions', [$address,0,0,9999999]);
+        \Illuminate\Support\Facades\Log::debug("searchrawtransactions end ($address)");
+
+        $txos = [];
+        $raw_txos = json_decode(json_encode($rpc_result->result), true);
+        $raw_txos_count = count($raw_txos);
+        foreach ($raw_txos as $offset => $raw_txo_hex) {
+            // for testing
+            if (is_array($raw_txo_hex)) { $txos[] = $raw_txo_hex; continue; }
+
+            // hash = sha256(sha256(data).digest()).digest()
+            $big_endian_hex = bin2hex(hash('sha256', hash('sha256', hex2bin($raw_txo_hex), true), true));
+            $txid = implode('', array_reverse(str_split($big_endian_hex, 2)));
+
+            // try to load from the database table
+            $decoded_tx = null;
+            if ($this->utxo_cache_table_provider) {
+                $record = $this->utxo_cache_table_provider->__invoke()->where('txid', '=', $txid)->first();
+                if ($record) {
+                    $decoded_tx = json_decode($record->transaction, true);
+                    $txos[] = $decoded_tx;
+                    continue;
+                }
+            }
+
+            // load the transaction from bitcoind
+            \Illuminate\Support\Facades\Log::debug(($offset+1)." of $raw_txos_count for $address");
+            $decoded_tx = json_decode(json_encode($this->bitcoind_rpc_client->execute('getrawtransaction', [$txid, 1])->result), true);
+            $txos[] = $decoded_tx;
+
+            // insert into cache
+            if ($this->utxo_cache_table_provider) {
+                try {
+                    if ($decoded_tx['confirmations'] >= self::CACHE_CONFIRMATIONS) {
+                        $this->utxo_cache_table_provider->__invoke()->insert([
+                            'txid'        => $txid,
+                            'transaction' => json_encode($decoded_tx),
+                            'last_update' => date("Y-m-d H:i:s"),
+                        ]);
+                    }
+                } catch (QueryException $e) {
+                    if ($e->errorInfo[0] == 23000) {
+                        // ignore duplicates
+                    } else {
+                        throw $e;
+                    }
+                }
+            }
+        }
 
         $spent_txos_map = [];
         foreach($txos as $txo) {
@@ -206,6 +257,7 @@ class BitcoinPayer
         }
 
         // find unspent txos
+        $unspent_txos = [];
         foreach($txos as $txo) {
             foreach($txo['vout'] as $vout) {
                 if (isset($vout['scriptPubKey']) AND isset($vout['scriptPubKey']['type']) AND $vout['scriptPubKey']['type'] == 'pubkeyhash') {
@@ -215,7 +267,7 @@ class BitcoinPayer
                         if (!isset($spent_txos_map[$utxo_key])) {
                             if (isset($unspent_txos[$utxo_key])) {
                                 // ignore 0 conf utxos if there is a confirmed tx to replace it
-                                if ($txo['confirmations'] < $unspent_txos[$utxo_key]['confirmations']) {
+                                if ($txo['confirmations'] < self::CACHE_CONFIRMATIONS AND $txo['confirmations'] < $unspent_txos[$utxo_key]['confirmations']) {
                                     continue;
                                 }
                             }
@@ -238,6 +290,7 @@ class BitcoinPayer
             'script'        => $bitcoind_vout['scriptPubKey']['hex'],
             'amount'        => $bitcoind_vout['value'],
             'confirmations' => $bitcoind_txo['confirmations'],
+            'confirmed'     => ($bitcoind_txo['confirmations'] > 0),
         ];
     }
 

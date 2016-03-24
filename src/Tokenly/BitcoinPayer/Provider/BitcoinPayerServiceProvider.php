@@ -5,10 +5,11 @@ namespace Tokenly\BitcoinPayer\Provider;
 
 use Exception;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\ServiceProvider;
-use Tokenly\BitcoinPayer\BitcoinPayer;
 use Nbobtc\Bitcoind\Bitcoind;
 use Nbobtc\Bitcoind\Client;
+use Tokenly\BitcoinPayer\BitcoinPayer;
 
 /*
 * BitcoinPayerServiceProvider
@@ -48,7 +49,10 @@ class BitcoinPayerServiceProvider extends ServiceProvider
         $this->app->bind('Tokenly\BitcoinPayer\BitcoinPayer', function($app) {
             $bitcoind_client = $app->make('Nbobtc\Bitcoind\Client');
             $bitcoind = $app->make('Nbobtc\Bitcoind\Bitcoind');
-            $sender = new BitcoinPayer($bitcoind, $bitcoind_client);
+            $cache_table_provider = function() {
+                return DB::table('address_txos_cache');
+            };
+            $sender = new BitcoinPayer($bitcoind, $bitcoind_client, $cache_table_provider);
             return $sender;
         });
     }
