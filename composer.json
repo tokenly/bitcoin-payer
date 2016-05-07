@@ -12,8 +12,7 @@
     ],
     "require": {
         "php": ">=5.4.0",
-        "nbobtc/bitcoind-php": "1.2.*",
-        "guzzlehttp/guzzle": "~5"
+        "nbobtc/bitcoind-php": "1.2.*"
     },
     "require-dev": {
         "phpunit/phpunit": "~4"
