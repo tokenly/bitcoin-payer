@@ -4,6 +4,7 @@ namespace Tokenly\BitcoinPayer;
 
 use Exception;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 use Tokenly\BitcoinPayer\Exception\PaymentException;
 
 /*
@@ -16,7 +17,7 @@ class BitcoinPayer
 
     const CACHE_CONFIRMATIONS = 6;
 
-    public function __construct($bitcoind_client, $bitcoind_rpc_client, $utxo_cache_table_provider=null) {
+    public function __construct($bitcoind_client, $bitcoind_rpc_client, $utxo_cache_table_provider) {
         $this->bitcoind_client           = $bitcoind_client;
         $this->bitcoind_rpc_client       = $bitcoind_rpc_client;
         $this->utxo_cache_table_provider = $utxo_cache_table_provider;
@@ -193,106 +194,224 @@ class BitcoinPayer
         return $filtered_utxos;
     }
 
+    // ------------------------------------------------------------------------
+    
     protected function getUnspentOutputsFromBitcoind($address) {
+        return DB::transaction(function() use ($address) {
+            // clear everything from the cache with confirmations < 6
+            $this->clearImmatureTransactions($address);
 
-        // get all txos
-        \Illuminate\Support\Facades\Log::debug("searchrawtransactions begin ($address)");
-        $rpc_result = $this->bitcoind_rpc_client->execute('searchrawtransactions', [$address,0,0,9999999]);
-        \Illuminate\Support\Facades\Log::debug("searchrawtransactions end ($address)");
+            // get all txos
+            $rpc_result = $this->bitcoind_rpc_client->execute('searchrawtransactions', [$address,0,0,9999999]);
+            $raw_txos = json_decode(json_encode($rpc_result->result), true);
+            $raw_txos_count = count($raw_txos);
+            foreach ($raw_txos as $offset => $raw_transacton_hex) {
+                // \Illuminate\Support\Facades\Log::debug(($offset+1)." of $raw_txos_count for $address");
 
-        $txos = [];
-        $raw_txos = json_decode(json_encode($rpc_result->result), true);
-        $raw_txos_count = count($raw_txos);
-        foreach ($raw_txos as $offset => $raw_txo_hex) {
-            // for testing
-            if (is_array($raw_txo_hex)) { $txos[] = $raw_txo_hex; continue; }
-
-            // hash = sha256(sha256(data).digest()).digest()
-            $big_endian_hex = bin2hex(hash('sha256', hash('sha256', hex2bin($raw_txo_hex), true), true));
-            $txid = implode('', array_reverse(str_split($big_endian_hex, 2)));
-
-            // try to load from the database table
-            $decoded_tx = null;
-            if ($this->utxo_cache_table_provider) {
-                $record = $this->utxo_cache_table_provider->__invoke()->where('txid', '=', $txid)->first();
-                if ($record) {
-                    $decoded_tx = json_decode($record->transaction, true);
-                    $txos[] = $decoded_tx;
-                    continue;
+                if (is_array($raw_transacton_hex)) {
+                    // if this was provided as an array (for testing), just use it
+                    $decoded_tx = $raw_transacton_hex;
+                    $this->updateUTXOCacheWithDecodedTransactionData($address, $decoded_tx);
+                } else {
+                    $this->updateUTXOCacheWithRawTransactionHex($address, $raw_transacton_hex);
                 }
             }
 
-            // load the transaction from bitcoind
-            \Illuminate\Support\Facades\Log::debug(($offset+1)." of $raw_txos_count for $address");
-            $decoded_tx = json_decode(json_encode($this->bitcoind_rpc_client->execute('getrawtransaction', [$txid, 1])->result), true);
-            $txos[] = $decoded_tx;
-
-            // insert into cache
-            if ($this->utxo_cache_table_provider) {
-                try {
-                    if ($decoded_tx['confirmations'] >= self::CACHE_CONFIRMATIONS) {
-                        $this->utxo_cache_table_provider->__invoke()->insert([
-                            'txid'        => $txid,
-                            'transaction' => json_encode($decoded_tx),
-                            'last_update' => date("Y-m-d H:i:s"),
-                        ]);
-                    }
-                } catch (QueryException $e) {
-                    if ($e->errorInfo[0] == 23000) {
-                        // ignore duplicates
-                    } else {
-                        throw $e;
-                    }
-                }
-            }
-        }
-
-        $spent_txos_map = [];
-        foreach($txos as $txo) {
-            foreach($txo['vin'] as $vin) {
-                if (isset($vin['txid']) AND isset($vin['vout'])) {
-                    $spent_txos_map[$vin['txid'].':'.$vin['vout']] = true;
-                }
-            }
-        }
-
-        // find unspent txos
-        $unspent_txos = [];
-        foreach($txos as $txo) {
-            foreach($txo['vout'] as $vout) {
-                if (isset($vout['scriptPubKey']) AND isset($vout['scriptPubKey']['type']) AND $vout['scriptPubKey']['type'] == 'pubkeyhash') {
-                    if (isset($vout['scriptPubKey']['addresses']) AND in_array($address, $vout['scriptPubKey']['addresses'])) {
-                        $utxo_key = $txo['txid'].':'.$vout['n'];
-
-                        if (!isset($spent_txos_map[$utxo_key])) {
-                            if (isset($unspent_txos[$utxo_key])) {
-                                // ignore 0 conf utxos if there is a confirmed tx to replace it
-                                if ($txo['confirmations'] < self::CACHE_CONFIRMATIONS AND $txo['confirmations'] < $unspent_txos[$utxo_key]['confirmations']) {
-                                    continue;
-                                }
-                            }
-                            $unspent_txo = $this->normalizeBitcoindUTXO($vout, $txo);
-                            $unspent_txos[$utxo_key] = $unspent_txo;
-                        }
-                    }
-                }
-            }
-        }
-
-        return $unspent_txos;
+            // get all the TXOs that are still unspent
+            return $this->loadNormalizedUnspentUTXORecords($address);
+        });
     }
 
-    protected function normalizeBitcoindUTXO($bitcoind_vout, $bitcoind_txo) {
+    protected function updateUTXOCacheWithDecodedTransactionData($address, $decoded_tx) {
+        // if this transaction is found in the database, don't add any outputs again
+        $txid = $decoded_tx['txid'];
+        $is_cached_transaction = $this->isCachedTransaction($address, $txid);
+        // \Illuminate\Support\Facades\Log::debug("\$is_cached_transaction=".json_encode($is_cached_transaction, 192));
+
+        if (!$is_cached_transaction) {
+            // load this transaction from bitcoind and add each spent TXO (input) to the cache table
+            $this->updateUTXOCacheDatabaseEntriesWithDecodedTransactionData($address, $decoded_tx);
+        }
+    }
+
+    protected function updateUTXOCacheWithRawTransactionHex($address, $raw_transacton_hex) {
+        // calculate the txid using the raw transaction hex
+        $big_endian_hex = bin2hex(hash('sha256', hash('sha256', hex2bin($raw_transacton_hex), true), true));
+        $txid = implode('', array_reverse(str_split($big_endian_hex, 2)));
+
+        // if this transaction is found in the database, don't add any outputs again
+        $is_cached_transaction = $this->isCachedTransaction($address, $txid);
+
+        if (!$is_cached_transaction) {
+            // load this transaction from bitcoind and add each spent TXO (input) to the cache table
+            $decoded_tx = json_decode(json_encode($this->bitcoind_rpc_client->execute('getrawtransaction', [$txid, 1])->result), true);
+            $this->updateUTXOCacheDatabaseEntriesWithDecodedTransactionData($address, $decoded_tx);
+        }
+    }
+
+    protected function isCachedTransaction($address, $txid) {
+        $cache_table = $this->utxo_cache_table_provider->__invoke();
+        $found_cached_record = $cache_table
+            ->where('address_reference', '=', $address)
+            ->where('txid', '=', $txid)
+            ->first(['txid']);
+        return (!!$found_cached_record);
+    }
+
+    protected function clearImmatureTransactions($address) {
+        $cache_table = $this->utxo_cache_table_provider->__invoke();
+        $cache_table
+            ->where('address_reference', '=', $address)
+            ->where('confirmations', '<', self::CACHE_CONFIRMATIONS)
+            ->delete();
+
+        $cache_table = $this->utxo_cache_table_provider->__invoke();
+        $cache_table
+            ->where('address_reference', '=', $address)
+            ->where('spent_confirmations', '<', self::CACHE_CONFIRMATIONS)
+            ->delete();
+    }
+
+    protected function loadNormalizedUnspentUTXORecords($address) {
+        $normalized_unspent_txos = [];
+
+        $cache_table = $this->utxo_cache_table_provider->__invoke();
+        $unspent_txos = $cache_table
+            ->where('destination_address', '=', $address)
+            ->where('spent', '=', 0)
+            ->get();
+        foreach($unspent_txos as $unspent_txo_record) {
+            $normalized_unspent_txos[] = $this->normalizeBitcoindUTXORecord($unspent_txo_record);
+        }
+
+        return $normalized_unspent_txos;
+    }
+
+    protected function updateUTXOCacheDatabaseEntriesWithDecodedTransactionData($address, $decoded_tx) {
+        // process all vins
+        $this->insertTXInputsIntoCacheTable($address, $decoded_tx['txid'], $decoded_tx['vin'], $decoded_tx['confirmations']);
+
+        // process all vouts
+        $this->insertTXOutputsIntoCacheTable($address, $decoded_tx['txid'], $decoded_tx['vout'], $decoded_tx['confirmations']);
+    }
+ 
+    protected function insertTXInputsIntoCacheTable($address_reference, $txid, $vins, $confirmations) {
+        foreach($vins as $vin) {
+            if (isset($vin['txid']) AND isset($vin['vout'])) {
+                $spent_txos_map[$vin['txid'].':'.$vin['vout']] = true;
+
+                // this is a previous txid:n (TXO) that is spent in this transaction
+                $insert_vars = [
+                    'address_reference'   => $address_reference,
+                    'txid'                => $vin['txid'],
+                    'n'                   => $vin['vout'],
+                    'confirmations'       => $confirmations,
+                
+                    'spent'               => 1,
+                    'spent_confirmations' => $confirmations,
+
+                    'last_update'         => date("Y-m-d H:i:s"),
+                ];
+
+                // if it exists, merge it
+                $cache_table = $this->utxo_cache_table_provider->__invoke();
+                $existing_cache_record = $cache_table
+                    ->where('address_reference', '=', $address_reference)
+                    ->where('txid', '=', $vin['txid'])
+                    ->where('n', '=', $vin['vout'])
+                    ->lockForUpdate()
+                    ->first(['id']);
+
+                if ($existing_cache_record) {
+                    // update the existing record - mark it spent
+                    $cache_table = $this->utxo_cache_table_provider->__invoke();
+                    // don't overwrite confirmations
+                    unset($insert_vars['confirmations']);
+                    $cache_table
+                        ->where('id', $existing_cache_record->id)
+                        ->update($insert_vars);
+                } else {
+                    // create a new UTXO record and mark it spent
+                    $cache_table = $this->utxo_cache_table_provider->__invoke();
+                    $cache_table->insert($insert_vars);
+                }
+            }
+        }
+    }
+    
+    protected function insertTXOutputsIntoCacheTable($address_reference, $txid, $vouts, $confirmations) {
+        foreach($vouts as $vout) {
+            if (isset($vout['scriptPubKey']) AND isset($vout['scriptPubKey']['type']) AND $vout['scriptPubKey']['type'] == 'pubkeyhash') {
+                if (isset($vout['scriptPubKey']['addresses']) AND $vout['scriptPubKey']['addresses']) {
+                    $value_sat = $vout['value'];
+                    $insert_vars = [
+                        'address_reference'   => $address_reference,
+                        'txid'                => $txid,
+                        'n'                   => $vout['n'],
+                        'confirmations'       => $confirmations,
+                        'destination_address' => $vout['scriptPubKey']['addresses'][0],
+                        'destination_value'   => $value_sat,
+                        'script'              => $vout['scriptPubKey']['hex'],
+                    
+                        'last_update'         => date("Y-m-d H:i:s"),
+                    ];
+
+                    // if it exists, merge it
+                    $cache_table = $this->utxo_cache_table_provider->__invoke();
+                    $existing_cache_record = $cache_table
+                        ->where('address_reference', '=', $address_reference)
+                        ->where('txid', '=', $txid)
+                        ->where('n', '=', $vout['n'])
+                        ->lockForUpdate()
+                        ->first(['id']);
+
+                    if ($existing_cache_record) {
+                        // update the existing record - fill in destination address, value and script
+                        $cache_table = $this->utxo_cache_table_provider->__invoke();
+                        $insert_vars = $existing_cache_record->$insert_vars;
+                        $cache_table
+                            ->where('id', $existing_cache_record->id)
+                            ->update($insert_vars);
+                    } else {
+                        // create a new UTXO record
+                        $cache_table = $this->utxo_cache_table_provider->__invoke();
+                        $cache_table->insert($insert_vars);
+                    }
+                }
+            }
+        }
+
+    }
+
+    protected function normalizeBitcoindUTXORecord($unspent_txo_record) {
         return [
-            'address'       => $bitcoind_vout['scriptPubKey']['addresses'][0],
-            'txid'          => $bitcoind_txo['txid'],
-            'vout'          => $bitcoind_vout['n'],
-            'script'        => $bitcoind_vout['scriptPubKey']['hex'],
-            'amount'        => $bitcoind_vout['value'],
-            'confirmations' => $bitcoind_txo['confirmations'],
-            'confirmed'     => ($bitcoind_txo['confirmations'] > 0),
+            'address'       => $unspent_txo_record->destination_address,
+            'txid'          => $unspent_txo_record->txid, // $bitcoind_txo['txid'],
+            'vout'          => $unspent_txo_record->n, // $bitcoind_vout['n'],
+            'script'        => $unspent_txo_record->script, // $bitcoind_vout['scriptPubKey']['hex'],
+            'amount'        => $unspent_txo_record->destination_value, // $bitcoind_vout['value'],
+            'confirmations' => $unspent_txo_record->confirmations, // $bitcoind_txo['confirmations'],
+            'confirmed'     => ($unspent_txo_record->confirmations > 0), // ($bitcoind_txo['confirmations'] > 0),
         ];
     }
+
+        // -----------------------------------
+        // database format:
+        // 
+        //   address_reference
+        //   txid
+        //   n
+        //   confirmations
+        //   script
+        //   destination_address
+        //   destination_value
+        //   
+        //   spent
+        //   spent_confirmations
+        //   
+        //   last_update
+        //   
+        // -----------------------------------
 
 
 }
