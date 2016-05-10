@@ -6,6 +6,7 @@ use Exception;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Tokenly\BitcoinPayer\Exception\PaymentException;
+use Tokenly\CurrencyLib\CurrencyUtil;
 
 /*
 * BitcoinPayer
@@ -343,7 +344,7 @@ class BitcoinPayer
         foreach($vouts as $vout) {
             if (isset($vout['scriptPubKey']) AND isset($vout['scriptPubKey']['type']) AND $vout['scriptPubKey']['type'] == 'pubkeyhash') {
                 if (isset($vout['scriptPubKey']['addresses']) AND $vout['scriptPubKey']['addresses']) {
-                    $value_sat = $vout['value'];
+                    $value_sat = CurrencyUtil::valueToSatoshis($vout['value']);
                     $insert_vars = [
                         'address_reference'   => $address_reference,
                         'txid'                => $txid,
@@ -389,7 +390,8 @@ class BitcoinPayer
             'txid'          => $unspent_txo_record->txid, // $bitcoind_txo['txid'],
             'vout'          => $unspent_txo_record->n, // $bitcoind_vout['n'],
             'script'        => $unspent_txo_record->script, // $bitcoind_vout['scriptPubKey']['hex'],
-            'amount'        => $unspent_txo_record->destination_value, // $bitcoind_vout['value'],
+            'amount'        => CurrencyUtil::satoshisToValue($unspent_txo_record->destination_value), // $bitcoind_vout['value'],
+            'amount_sat'    => $unspent_txo_record->destination_value, // $bitcoind_vout['value'],
             'confirmations' => $unspent_txo_record->confirmations, // $bitcoind_txo['confirmations'],
             'confirmed'     => ($unspent_txo_record->confirmations > 0), // ($bitcoind_txo['confirmations'] > 0),
         ];
