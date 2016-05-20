@@ -278,6 +278,7 @@ class BitcoinPayer
 
         $cache_table = $this->utxo_cache_table_provider->__invoke();
         $unspent_txos = $cache_table
+            ->where('address_reference', '=', $address)
             ->where('destination_address', '=', $address)
             ->where('spent', '=', 0)
             ->get();
@@ -299,8 +300,6 @@ class BitcoinPayer
     protected function insertTXInputsIntoCacheTable($address_reference, $txid, $vins, $confirmations) {
         foreach($vins as $vin) {
             if (isset($vin['txid']) AND isset($vin['vout'])) {
-                $spent_txos_map[$vin['txid'].':'.$vin['vout']] = true;
-
                 // this is a previous txid:n (TXO) that is spent in this transaction
                 $insert_vars = [
                     'address_reference'   => $address_reference,
@@ -369,7 +368,6 @@ class BitcoinPayer
                     if ($existing_cache_record) {
                         // update the existing record - fill in destination address, value and script
                         $cache_table = $this->utxo_cache_table_provider->__invoke();
-                        $insert_vars = $existing_cache_record->$insert_vars;
                         $cache_table
                             ->where('id', $existing_cache_record->id)
                             ->update($insert_vars);
