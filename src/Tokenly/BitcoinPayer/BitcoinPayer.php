@@ -246,6 +246,7 @@ class BitcoinPayer
         if (!$is_cached_transaction) {
             // load this transaction from bitcoind and add each spent TXO (input) to the cache table
             $decoded_tx = json_decode(json_encode($this->bitcoind_rpc_client->execute('getrawtransaction', [$txid, 1])->result), true);
+
             $this->updateUTXOCacheDatabaseEntriesWithDecodedTransactionData($address, $decoded_tx);
         }
     }
@@ -341,7 +342,12 @@ class BitcoinPayer
     
     protected function insertTXOutputsIntoCacheTable($address_reference, $txid, $vouts, $confirmations) {
         foreach($vouts as $vout) {
-            if (isset($vout['scriptPubKey']) AND isset($vout['scriptPubKey']['type']) AND $vout['scriptPubKey']['type'] == 'pubkeyhash') {
+            $is_valid_script_type =
+                (isset($vout['scriptPubKey']) AND isset($vout['scriptPubKey']['type']))
+                AND
+                ($vout['scriptPubKey']['type'] == 'pubkeyhash' OR $vout['scriptPubKey']['type'] == 'scripthash');
+
+            if ($is_valid_script_type) {
                 if (isset($vout['scriptPubKey']['addresses']) AND $vout['scriptPubKey']['addresses']) {
                     $value_sat = CurrencyUtil::valueToSatoshis($vout['value']);
                     $insert_vars = [
