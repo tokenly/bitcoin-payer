@@ -198,29 +198,43 @@ class BitcoinPayer
     // ------------------------------------------------------------------------
     
     protected function getUnspentOutputsFromBitcoind($address) {
-        return DB::transaction(function() use ($address) {
-            // clear everything from the cache with confirmations < 6
-            $this->clearImmatureTransactions($address);
+        foreach ([0,1] as $load_with_transaction_detail) {
+            try {
+                return DB::transaction(function() use ($address, $load_with_transaction_detail) {
+                    // clear everything from the cache with confirmations < 6
+                    $this->clearImmatureTransactions($address);
 
-            // get all txos
-            $rpc_result = $this->bitcoind_rpc_client->execute('searchrawtransactions', [$address,0,0,9999999]);
-            $raw_txos = json_decode(json_encode($rpc_result->result), true);
-            $raw_txos_count = count($raw_txos);
-            foreach ($raw_txos as $offset => $raw_transacton_hex) {
-                // \Illuminate\Support\Facades\Log::debug(($offset+1)." of $raw_txos_count for $address");
+                    // get all txos
+                    $rpc_result = $this->bitcoind_rpc_client->execute('searchrawtransactions', [$address,$load_with_transaction_detail,0,9999999]);
+                    $raw_txos = json_decode(json_encode($rpc_result->result), true);
+                    $raw_txos_count = count($raw_txos);
 
-                if (is_array($raw_transacton_hex)) {
-                    // if this was provided as an array (for testing), just use it
-                    $decoded_tx = $raw_transacton_hex;
-                    $this->updateUTXOCacheWithDecodedTransactionData($address, $decoded_tx);
-                } else {
-                    $this->updateUTXOCacheWithRawTransactionHex($address, $raw_transacton_hex);
+                    foreach ($raw_txos as $offset => $raw_transacton_hex) {
+                        // \Illuminate\Support\Facades\Log::debug(($offset+1)." of $raw_txos_count for $address: \$raw_transacton_hex=".json_encode($raw_transacton_hex, 192));
+
+                        if (is_array($raw_transacton_hex)) {
+                            // if this was provided as an array (for testing), just use it
+                            $decoded_tx = $raw_transacton_hex;
+                            $this->updateUTXOCacheWithDecodedTransactionData($address, $decoded_tx);
+                        } else {
+                            $this->updateUTXOCacheWithRawTransactionHex($address, $raw_transacton_hex);
+                        }
+                    }
+
+                    // get all the TXOs that are still unspent
+                    return $this->loadNormalizedUnspentUTXORecords($address);
+                });
+            } catch (Exception $e) {
+                if (!$load_with_transaction_detail) {
+                    // if we fail the first time
+                    //    catch the exception and try again with details from bitcoind
+                    continue;
                 }
-            }
 
-            // get all the TXOs that are still unspent
-            return $this->loadNormalizedUnspentUTXORecords($address);
-        });
+                // if we fail the second time, throw the exception
+                throw $e;
+            }
+        }
     }
 
     protected function updateUTXOCacheWithDecodedTransactionData($address, $decoded_tx) {
